@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(
-                    &serde_json::json!({"sample":store.get("sample")?,"pending_notifications":store.queue_size()?,"alerts":store.recent(true,false,20)?})
+                    &serde_json::json!({"sample":store.get("sample")?,"memory":store.get("memory")?,"disk":store.get("disk")?,"pending_notifications":store.queue_size()?,"alerts":store.recent(true,false,20)?})
                 )?
             );
         }

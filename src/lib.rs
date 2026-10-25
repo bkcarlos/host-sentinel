@@ -1,6 +1,7 @@
 pub mod config;
 pub mod cpu;
 pub mod daemon;
+pub mod disk;
 pub mod journal;
 pub mod mcp;
 pub mod memory;

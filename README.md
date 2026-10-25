@@ -1,6 +1,6 @@
 # Host Sentinel
 
-Lightweight Linux SSH, CPU and memory monitoring in Rust, with durable Rakazo notifications, a read-only MCP server, and optional operator-approved SSH response. MIT licensed, self-hosted, no cloud account required.
+Lightweight Linux SSH, CPU, memory and disk monitoring in Rust, with durable Rakazo notifications, a read-only MCP server, and optional operator-approved SSH response. MIT licensed, self-hosted, no cloud account required.
 
 [中文说明](README.zh-CN.md)
 
@@ -11,7 +11,7 @@ Lightweight Linux SSH, CPU and memory monitoring in Rust, with durable Rakazo no
 - Alerts on repeated `Failed …` authentication records from one IP. `Invalid user …` records are retained separately, avoiding counting the same failure twice.
 - Detects sustained whole-machine CPU load and sustained jumps above a rolling baseline. Sends recovery events and includes the five highest CPU processes (names and PIDs only).
 - Atomically saves journal cursor, detector state and events to SQLite. Durable webhook outbox, exponential retries, stable Rakazo idempotency keys, and no HTTP redirects.
-- Exposes seven query tools over MCP Streamable HTTP or stdio: `get_status`, `list_alerts`, `list_logins`, `get_sessions`, `get_top_processes`, `get_memory_status`, `get_top_memory_processes`.
+- Exposes eight query tools over MCP Streamable HTTP or stdio: `get_status`, `list_alerts`, `list_logins`, `get_sessions`, `get_top_processes`, `get_memory_status`, `get_top_memory_processes`, `get_disk_status`.
 - Stores observations locally; only alerts go to your configured Rakazo bot. No telemetry.
 - Optional separate action endpoint: expiring disconnect/quarantine and process signal proposals, human approval in the client, protected management sources and durable execution audit. Disabled by default; see [Response setup and authorization boundary](deploy/RESPONSE.md).
 
@@ -132,3 +132,9 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities. Contributions are 
 ## Memory queries
 
 Memory is sampled at `sample_seconds`, with RAM usage based on `MemTotal - MemAvailable`, swap, PSI (10/60/300-second stall percentages), cumulative OOM kills and the top 20 RSS processes. Null means unavailable, not zero. RSS includes shared pages and cannot be summed; samples can miss exiting/unreadable processes. Memory is query-only in this release; it does not emit threshold alerts. Kernel definitions: [proc](https://docs.kernel.org/filesystems/proc.html) and [PSI](https://docs.kernel.org/accounting/psi.html).
+
+## Disk queries
+
+`get_disk_status` reports mounted local filesystem capacity, used/available bytes, usage percentage and inode counts. It refreshes every 30 seconds using a fixed, bounded GNU `df` command; disk sampling failures do not stop CPU/SSH monitoring. Check timestamp, `partial` and `error`/`collection_error`. Unsupported inode counts are null. Available bytes exclude reserved blocks; percentages follow [GNU df](https://www.gnu.org/s/coreutils/manual/html_node/df-invocation.html) and round up.
+
+The inventory reflects the service mount namespace and permissions, coalesces duplicate/bind mounts, and excludes remote/unmounted filesystems, tmpfs/devtmpfs, overlay, squashfs and efivarfs. Container data on the host disk still contributes to its usage. No recursive directory scans, file deletion, cleanup or disk threshold notifications are performed. Linux runtime requires GNU coreutils at `/usr/bin/df`.

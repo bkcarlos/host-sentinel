@@ -71,6 +71,8 @@ async fn mcp_auth_handshake_tool_list_and_origin_guard() -> Result<()> {
         "sample",
         &json!({"timestamp":123,"cpu_percent":12.5,"top_processes":[]}),
     )?;
+    let disk = json!({"timestamp":123,"partial":false,"filesystems":[{"mount_point":"/data with spaces","total_bytes":1000,"used_bytes":600,"available_bytes":300,"used_percent":67,"inodes_total":null}]});
+    db.set("disk", &disk)?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let app = mcp::router(db, &McpConfig::default(), TOKEN);
@@ -147,13 +149,27 @@ async fn mcp_auth_handshake_tool_list_and_origin_guard() -> Result<()> {
         .send()
         .await?;
     let tools = rpc_response(tools_response).await?;
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 8);
     let result_response = client.post(&url).bearer_auth(TOKEN).header("accept","application/json, text/event-stream").header("mcp-session-id",&sid).header("mcp-protocol-version","2025-03-26")
         .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_status","arguments":{}}})).send().await?;
     let result = rpc_response(result_response).await?;
     let status: Value =
         serde_json::from_str(result["result"]["content"][0]["text"].as_str().unwrap())?;
     assert_eq!(status["sample"]["cpu_percent"], 12.5);
+    assert_eq!(status["disk"], disk);
+    let disk_tool = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "get_disk_status")
+        .unwrap();
+    assert_eq!(disk_tool["annotations"]["readOnlyHint"], true);
+    let response = client.post(&url).bearer_auth(TOKEN).header("accept","application/json, text/event-stream").header("mcp-session-id",&sid).header("mcp-protocol-version","2025-03-26")
+        .json(&json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_disk_status","arguments":{}}})).send().await?;
+    let result = rpc_response(response).await?;
+    let actual: Value =
+        serde_json::from_str(result["result"]["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(actual, disk);
     server.abort();
     Ok(())
 }

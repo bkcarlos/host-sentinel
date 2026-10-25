@@ -74,6 +74,7 @@ pub async fn run(config: Config) -> Result<()> {
         result = follow_journal(&config,store.clone()) => result,
         result = sample_cpu(&config,store.clone()) => result,
         result = session_inventory(store.clone()) => result,
+        result = disk_inventory(store.clone()) => result,
         result = async {
             if let Some(notifier) = notifier {
                 loop { notifier.flush(&store,crate::now()).await?; tokio::time::sleep(Duration::from_secs(2)).await; }
@@ -309,6 +310,15 @@ async fn sample_cpu(config: &Config, store: Store) -> Result<()> {
             store.prune(now.saturating_sub(config.retention_days * 86400))?;
             last_prune = now;
         }
+    }
+}
+
+async fn disk_inventory(store: Store) -> Result<()> {
+    loop {
+        let snapshot = crate::disk::sample().await.unwrap_or_else(|e|
+            json!({"timestamp":crate::now(),"sample_interval_seconds":30,"error":e.to_string()}));
+        store.set("disk", &snapshot)?;
+        tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
 
