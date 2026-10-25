@@ -1,0 +1,35 @@
+[package]
+name = "host-sentinel"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Linux SSH and CPU monitoring with durable Rakazo alerts and read-only MCP"
+repository = "https://github.com/bkcarlos/host-sentinel"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+fs2 = "0.4"
+ipnet = { version = "2", features = ["serde"] }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rmcp = { version = "3.7", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+tokio = { version = "1", features = ["full"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+lto = "thin"
+strip = true

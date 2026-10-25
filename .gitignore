@@ -1,0 +1,11 @@
+/target/
+/state/
+.env
+.env.*
+secrets.env
+config.toml
+*.db
+*.db-shm
+*.db-wal
+*.token
+.DS_Store

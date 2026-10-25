@@ -1,0 +1,43 @@
+# Copy to config.toml. All examples use reserved documentation addresses.
+state_dir = "state"
+host_label = "my-ubuntu"
+sample_seconds = 5
+retention_days = 30
+
+[cpu]
+high_percent = 85.0
+recovery_percent = 65.0
+sustained_seconds = 180
+baseline_seconds = 300
+spike_delta_percent = 40.0
+spike_min_percent = 70.0
+spike_seconds = 30
+cooldown_seconds = 900
+
+[ssh]
+units = ["ssh.service", "sshd.service"]
+failure_count = 10
+failure_window_seconds = 300
+failure_cooldown_seconds = 900
+# Default: every successful login is unknown and generates an alert.
+trusted = []
+
+# To trust a specific user, source AND key, remove `trusted = []` above:
+# [[ssh.trusted]]
+# user = "ubuntu"
+# networks = ["192.0.2.10/32", "2001:db8::/64"]
+# fingerprints = ["SHA256:REPLACE_WITH_YOUR_PUBLIC_KEY_FINGERPRINT"]
+# Fields within a rule are ANDed; separate rules are ORed.
+# Omit networks for a known key that roams between IPs (reduced source checking).
+
+[webhook]
+enabled = false
+url = "http://127.0.0.1:3100/api/v1/bots/REPLACE_BOT_ID/webhook"
+token_env = "RAKAZO_WEBHOOK_TOKEN"
+timeout_seconds = 10
+
+[mcp]
+enabled = false
+listen = "127.0.0.1:8787"
+token_env = "SENTINEL_MCP_TOKEN"
+allowed_hosts = ["localhost", "127.0.0.1", "::1"]
