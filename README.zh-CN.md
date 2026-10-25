@@ -74,3 +74,17 @@ Rakazo 在 Docker 内运行时，容器的 `127.0.0.1` 不是宿主机。需要�
 另有 `get_auth_attempts`、`get_session_details`、`get_trust_details`、`get_security_evidence`、`get_collection_health` 和 `get_automation_activity`。逐条失败记录与告警阈值独立，用户服务管理器和关闭中的会话不计作活跃 SSH。只读调查不需要处置审批。
 
 旧日志可通过管理员 CLI 回填，不重复发告警；已轮转或未记录的数据无法补回。自动化归属需要 root 登记的任务回执或经过核实的独立密钥，共用 IP/密钥不能识别具体操作者。新版本不会自动轮换现有 SSH 密钥。详见 [调查工具与证据边界](deploy/INVESTIGATION.md)。
+
+## 受限只读调查（v0.4）
+
+监控 MCP 现在提供 20 个工具，新增：
+
+- `get_session_processes`：指定 SSH 会话当前的进程树、可执行文件、CPU 和 RSS。
+- `get_session_connections`：该会话当前 TCP/UDP 连接的地址、端口、状态及 PID。
+- `get_service_status`：白名单服务的运行状态、重启次数和资源计数；不传 unit 可列出允许的服务。
+- `get_service_logs`：白名单服务限定时段日志，最多 24 小时、100 条，默认最近 15 分钟、30 条；常见凭据尽力脱敏。
+- `get_login_timeline`：按每次成功登录关联开启、关闭、断开证据和可计算的持续时间，带证据 ID、分页与覆盖说明。
+
+没有通用 shell 执行接口。会话查询需管理员显式启用本机代理和可选权限配置；服务查询仍由普通监控账号执行。封控和终止进程仍使用独立接口、逐次人工审批。详见 [部署和权限说明](deploy/DIAGNOSTICS.md)。
+
+当前快照不等于历史命令记录；离开会话 cgroup 的程序不在该快照范围。PAM 会话关闭不等于 TCP 已断开，缺失关闭记录也不表示仍在线。日志分页条数不等于时间段总量。未预先采集的历史命令无法补查。

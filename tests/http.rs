@@ -155,7 +155,7 @@ async fn mcp_auth_handshake_tool_list_and_origin_guard() -> Result<()> {
         .send()
         .await?;
     let tools = rpc_response(tools_response).await?;
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 15);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 20);
     let result_response = client.post(&url).bearer_auth(TOKEN).header("accept","application/json, text/event-stream").header("mcp-session-id",&sid).header("mcp-protocol-version","2025-03-26")
         .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_status","arguments":{}}})).send().await?;
     let result = rpc_response(result_response).await?;
@@ -187,6 +187,49 @@ async fn mcp_auth_handshake_tool_list_and_origin_guard() -> Result<()> {
         "2024-01-01T20:17:23+08:00"
     );
     assert_eq!(actual["coverage"]["history_gap_possible"], true);
+    for (name, args, expected_error) in [
+        (
+            "get_session_processes",
+            json!({"session_id":"42"}),
+            "disabled",
+        ),
+        (
+            "get_session_connections",
+            json!({"session_id":"42"}),
+            "disabled",
+        ),
+        (
+            "get_service_status",
+            json!({"unit":"ssh.service;id"}),
+            "allowlist",
+        ),
+        (
+            "get_service_logs",
+            json!({"unit":"unapproved.service"}),
+            "allowlist",
+        ),
+        (
+            "get_login_timeline",
+            json!({"kind":"failure"}),
+            "successful login",
+        ),
+    ] {
+        let tool = tools["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap();
+        assert_eq!(tool["annotations"]["readOnlyHint"], true);
+        assert_eq!(tool["annotations"]["destructiveHint"], false);
+        let response = client.post(&url).bearer_auth(TOKEN).header("accept","application/json, text/event-stream").header("mcp-session-id",&sid).header("mcp-protocol-version","2025-03-26")
+            .json(&json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":name,"arguments":args}})).send().await?;
+        let result = rpc_response(response).await?;
+        let actual: Value =
+            serde_json::from_str(result["result"]["content"][0]["text"].as_str().unwrap())?;
+        assert!(actual["error"].as_str().unwrap().contains(expected_error));
+        assert_eq!(actual["data_available"], false);
+    }
     server.abort();
     Ok(())
 }

@@ -123,6 +123,8 @@ pub struct McpConfig {
     pub listen: SocketAddr,
     pub token_env: String,
     pub allowed_hosts: Vec<String>,
+    pub diagnostics_socket: Option<PathBuf>,
+    pub allowed_services: Vec<String>,
 }
 impl Default for McpConfig {
     fn default() -> Self {
@@ -131,6 +133,14 @@ impl Default for McpConfig {
             listen: "127.0.0.1:8787".parse().unwrap(),
             token_env: "SENTINEL_MCP_TOKEN".into(),
             allowed_hosts: vec!["localhost".into(), "127.0.0.1".into(), "::1".into()],
+            diagnostics_socket: None,
+            allowed_services: vec![
+                "ssh.service".into(),
+                "sshd.service".into(),
+                "systemd-logind.service".into(),
+                "host-sentinel.service".into(),
+                "host-sentinel-response.service".into(),
+            ],
         }
     }
 }
@@ -152,6 +162,7 @@ pub struct ResponseConfig {
     pub ssh_ports: Vec<u16>,
     pub max_quarantine_seconds: u64,
     pub proposal_ttl_seconds: u64,
+    pub allow_read_diagnostics: bool,
 }
 impl Default for ResponseConfig {
     fn default() -> Self {
@@ -170,6 +181,7 @@ impl Default for ResponseConfig {
             ssh_ports: vec![22],
             max_quarantine_seconds: 3600,
             proposal_ttl_seconds: 300,
+            allow_read_diagnostics: false,
         }
     }
 }
@@ -183,6 +195,22 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.mcp.allowed_services.len() <= 32
+                && self
+                    .mcp
+                    .allowed_services
+                    .iter()
+                    .all(|s| crate::diagnostics::valid_service(s)),
+            "invalid service allowlist"
+        );
+        ensure!(
+            self.mcp
+                .diagnostics_socket
+                .as_ref()
+                .is_none_or(|s| s.is_absolute()),
+            "diagnostics socket must be absolute"
+        );
         if self.response.enabled {
             let r = &self.response;
             ensure!(

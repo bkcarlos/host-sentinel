@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
                 )?
             );
         }
-        Action::Mcp => mcp::serve_stdio(daemon::open_store(&config)?).await?,
+        Action::Mcp => mcp::serve_stdio(daemon::open_store(&config)?, config.mcp.clone()).await?,
         Action::TestWebhook => {
             anyhow::ensure!(
                 config.webhook.enabled,

@@ -1,6 +1,6 @@
 [package]
 name = "host-sentinel"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 description = "Linux SSH and CPU monitoring with durable Rakazo alerts and read-only MCP"

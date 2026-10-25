@@ -11,7 +11,7 @@ Lightweight Linux SSH, CPU, memory and disk monitoring in Rust, with durable Rak
 - Alerts on repeated `Failed …` authentication records from one IP. `Invalid user …` records are retained separately, avoiding counting the same failure twice.
 - Detects sustained whole-machine CPU load and sustained jumps above a rolling baseline. Sends recovery events and includes the five highest CPU processes (names and PIDs only).
 - Atomically saves journal cursor, detector state and events to SQLite. Durable webhook outbox, exponential retries, stable Rakazo idempotency keys, and no HTTP redirects.
-- Exposes fifteen query tools over MCP Streamable HTTP or stdio: `get_status`, `list_alerts`, `list_logins`, `get_sessions`, `get_top_processes`, `get_memory_status`, `get_top_memory_processes`, `get_disk_status`, plus seven [SSH investigation tools](deploy/INVESTIGATION.md).
+- Exposes twenty query tools over MCP Streamable HTTP or stdio: `get_status`, `list_alerts`, `list_logins`, `get_sessions`, `get_top_processes`, `get_memory_status`, `get_top_memory_processes`, `get_disk_status`, plus seven [SSH investigation tools](deploy/INVESTIGATION.md) and five [bounded read-only diagnostics](deploy/DIAGNOSTICS.md).
 - Stores observations locally; only alerts go to your configured Rakazo bot. No telemetry.
 - Optional separate action endpoint: expiring disconnect/quarantine and process signal proposals, human approval in the client, protected management sources and durable execution audit. Disabled by default; see [Response setup and authorization boundary](deploy/RESPONSE.md).
 

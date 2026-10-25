@@ -40,6 +40,9 @@ token_env = "RAKAZO_WEBHOOK_TOKEN"
 timeout_seconds = 10
 
 [mcp]
+# Optional live session inspection; see deploy/DIAGNOSTICS.md.
+# diagnostics_socket = "/run/host-sentinel-response/control.sock"
+allowed_services = ["ssh.service", "sshd.service", "systemd-logind.service", "host-sentinel.service", "host-sentinel-response.service"]
 enabled = false
 listen = "127.0.0.1:8787"
 token_env = "SENTINEL_MCP_TOKEN"
@@ -48,6 +51,7 @@ allowed_hosts = ["localhost", "127.0.0.1", "::1"]
 # Optional privileged response. Read deploy/RESPONSE.md before enabling.
 # Requires a separate root broker and an exact mandatory client approval rule.
 [response]
+allow_read_diagnostics = false
 enabled = false
 socket = "/run/host-sentinel-response/control.sock"
 state_dir = "/var/lib/host-sentinel-response"

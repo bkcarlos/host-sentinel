@@ -456,6 +456,66 @@ impl Store {
             "correlation_basis":"Same boot ID and journal PID, bounded by an accepted login and the next accepted login for that PID (maximum 24 hours). This is process-level correlation, not proof of a human operator. Missing close records do not imply an active session."}),
         )
     }
+    pub fn login_timeline(&self, q: &AuthQuery) -> Result<Value> {
+        ensure!(
+            q.kind.as_deref().is_none_or(|k| k == "success"),
+            "login timeline accepts only successful login starts; use get_auth_attempts for other kinds"
+        );
+        let mut q = q.clone();
+        q.kind = Some("success".into());
+        let mut report = self.auth_query(&q)?;
+        let snapshot = self.get("sessions")?.unwrap_or(Value::Null);
+        let fresh = snapshot["timestamp"]
+            .as_u64()
+            .is_some_and(|t| t <= crate::now() && crate::now() - t <= 45);
+        let mut timelines = vec![];
+        for login in report["records"].as_array().context("login rows")? {
+            let details = self.auth_evidence(login["evidence_id"].as_str().context("login ID")?)?;
+            let related = details["related_process_records"]
+                .as_array()
+                .context("related evidence")?;
+            let lifecycle = |kind: &str| {
+                related.iter().find(|r| {
+                    r["kind"] == kind && (kind == "disconnect" || r["user"] == login["user"])
+                })
+            };
+            let open = lifecycle("session_open");
+            let close = lifecycle("session_close");
+            let disconnect = lifecycle("disconnect");
+            let brief = |r: &Value| json!({"evidence_id":r["evidence_id"],"time":r["time"]});
+            let duration = close
+                .and_then(|r| {
+                    r["source"]["monotonic_microseconds"]
+                        .as_u64()?
+                        .checked_sub(login["source"]["monotonic_microseconds"].as_u64()?)
+                })
+                .map(|us| us as f64 / 1_000_000.0);
+            let active: Vec<_> = snapshot["sessions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|s| {
+                    fresh
+                        && s["is_active_ssh"] == true
+                        && s["matched_login"]["evidence_id"] == login["evidence_id"]
+                })
+                .map(|s| s["session_id"].clone())
+                .collect();
+            timelines.push(json!({"login":login,"session_open":open.map(brief),"session_close":close.map(brief),"disconnect":disconnect.map(brief),
+                "login_to_pam_close_seconds":duration,"duration_basis":"same-boot monotonic timestamps; null when unavailable or reversed; not TCP connection duration",
+                "session_close_observed":close.is_some(),"disconnect_observed":disconnect.is_some(),"currently_active_session_ids":active,
+                "current_state":if !active.is_empty(){"active_in_snapshot"}else{"not_established_from_snapshot"},
+                "related_records_truncated":details["related_records_truncated"]}));
+        }
+        report.as_object_mut().unwrap().remove("records");
+        report["timelines"] = json!(timelines);
+        report["session_snapshot_timestamp"] = snapshot["timestamp"].clone();
+        report["session_snapshot_fresh"] = json!(fresh);
+        report["timeline_scope"] = json!(
+            "Query range/counts refer only to successful login starts. Related events share boot/PID and occur before the next accepted login for that PID, maximum 24 hours and 100 records, potentially beyond the query end. Correlation is not an immutable kernel process identity or operator identity. PAM close does not prove TCP disconnection; no close does not imply an active connection. Missing or moved-scope processes and historical commands are not reconstructed. Pagination and lifecycle lookups are separate read snapshots; concurrent retention/backfill can change results."
+        );
+        Ok(report)
+    }
     pub fn investigate(&self, q: &AuthQuery) -> Result<Value> {
         let mut report = self.auth_query(q)?;
         report["current_sessions"] = self
@@ -654,6 +714,76 @@ mod tests {
         ingest(&store, &c, &mut tracker, &forged)?;
         assert_eq!(store.auth_query(&q)?["counts"]["success"], 0);
         assert_eq!(r["records"][0]["user"], "admin");
+        Ok(())
+    }
+    #[test]
+    fn timelines_correlate_each_login_without_pairing_aggregate_counts() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let store = Store::open(&dir.path().join("db"))?;
+        let c = Config::default();
+        let base = stamp("2024-01-01T20:00:00+08:00");
+        let mut first_id = String::new();
+        for (i, cursor, kind, pid, boot, mono) in [
+            (0, "first", "success", "1234", "boot", "1000000"),
+            (1, "wrong-pid", "close", "9999", "boot", "2000000"),
+            (2, "wrong-boot", "close", "1234", "other", "3000000"),
+            (3, "second", "success", "1234", "boot", "4000000"),
+            (4, "second-close", "close", "1234", "boot", "5000000"),
+        ] {
+            let message = if kind == "success" {
+                "Accepted publickey for ubuntu from 192.0.2.1 port 1234 ssh2"
+            } else {
+                "pam_unix(sshd:session): session closed for user ubuntu"
+            };
+            let mut raw = record(cursor, base + i * 1_000_000, message);
+            raw["_PID"] = json!(pid);
+            raw["_BOOT_ID"] = json!(boot);
+            raw["__MONOTONIC_TIMESTAMP"] = json!(mono);
+            let r = from_journal(&raw, &c, true).unwrap();
+            if i == 0 {
+                first_id = r.id.clone();
+            }
+            insert_record(&store.0.lock().unwrap(), &r)?;
+        }
+        let mut q = AuthQuery {
+            since: Some("2024-01-01T20:00:00+08:00".into()),
+            until: Some("2024-01-01T20:00:04+08:00".into()),
+            limit: Some(1),
+            ..Default::default()
+        };
+        let r = store.login_timeline(&q)?;
+        assert_eq!(r["counts"]["success"], 2);
+        assert_eq!(r["returned_count"], 1);
+        assert_eq!(r["timelines"][0]["session_close_observed"], false);
+        assert_eq!(
+            r["timelines"][0]["current_state"],
+            "not_established_from_snapshot"
+        );
+        q.offset = Some(1);
+        let r = store.login_timeline(&q)?;
+        assert_eq!(r["timelines"][0]["session_close_observed"], true);
+        assert_eq!(r["timelines"][0]["login_to_pam_close_seconds"], 1.0);
+        assert_eq!(r["timelines"][0]["disconnect_observed"], false);
+        // The close is outside the login-start window, but still correlated.
+        assert_eq!(
+            r["timelines"][0]["session_close"]["time"]["unix_microseconds"],
+            base + 4_000_000
+        );
+        q.offset = Some(0);
+        let mut snapshot = json!({"timestamp":crate::now(),"sessions":[{"session_id":"42","is_active_ssh":true,"matched_login":{"evidence_id":first_id}}]});
+        store.set("sessions", &snapshot)?;
+        assert_eq!(
+            store.login_timeline(&q)?["timelines"][0]["current_state"],
+            "active_in_snapshot"
+        );
+        snapshot["timestamp"] = json!(crate::now() - 46);
+        store.set("sessions", &snapshot)?;
+        assert_eq!(
+            store.login_timeline(&q)?["timelines"][0]["current_state"],
+            "not_established_from_snapshot"
+        );
+        q.kind = Some("failure".into());
+        assert!(store.login_timeline(&q).is_err());
         Ok(())
     }
     #[test]

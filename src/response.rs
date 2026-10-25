@@ -69,6 +69,12 @@ pub struct PrepareInput {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    SessionProcesses {
+        session_id: String,
+    },
+    SessionConnections {
+        session_id: String,
+    },
     List,
     Prepare {
         input: PrepareInput,
@@ -506,6 +512,14 @@ impl Ledger {
 
 async fn handle(req: Request, c: &ResponseConfig, host: &str, ledger: &Ledger) -> Result<Value> {
     match req {
+        Request::SessionProcesses { session_id } => {
+            ensure!(c.allow_read_diagnostics, "read diagnostics disabled");
+            crate::diagnostics::session_processes(&session_id).await
+        }
+        Request::SessionConnections { session_id } => {
+            ensure!(c.allow_read_diagnostics, "read diagnostics disabled");
+            crate::diagnostics::session_connections(&session_id).await
+        }
         Request::InspectProcess { pid } => crate::process_response::inspect(pid, c),
         Request::PrepareProcess { input } => {
             crate::process_response::prepare(input, c, host, ledger)

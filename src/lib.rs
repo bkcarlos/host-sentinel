@@ -1,6 +1,7 @@
 pub mod config;
 pub mod cpu;
 pub mod daemon;
+pub mod diagnostics;
 pub mod disk;
 pub mod investigation;
 pub mod journal;
