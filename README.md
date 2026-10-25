@@ -1,6 +1,6 @@
 # Host Sentinel
 
-Lightweight Linux SSH and CPU monitoring in Rust, with durable Rakazo notifications and a read-only MCP server. MIT licensed, self-hosted, no cloud account required.
+Lightweight Linux SSH, CPU and memory monitoring in Rust, with durable Rakazo notifications, a read-only MCP server, and optional operator-approved SSH response. MIT licensed, self-hosted, no cloud account required.
 
 [中文说明](README.zh-CN.md)
 
@@ -11,8 +11,9 @@ Lightweight Linux SSH and CPU monitoring in Rust, with durable Rakazo notificati
 - Alerts on repeated `Failed …` authentication records from one IP. `Invalid user …` records are retained separately, avoiding counting the same failure twice.
 - Detects sustained whole-machine CPU load and sustained jumps above a rolling baseline. Sends recovery events and includes the five highest CPU processes (names and PIDs only).
 - Atomically saves journal cursor, detector state and events to SQLite. Durable webhook outbox, exponential retries, stable Rakazo idempotency keys, and no HTTP redirects.
-- Exposes five query tools over MCP Streamable HTTP or stdio: `get_status`, `list_alerts`, `list_logins`, `get_sessions`, `get_top_processes`.
+- Exposes seven query tools over MCP Streamable HTTP or stdio: `get_status`, `list_alerts`, `list_logins`, `get_sessions`, `get_top_processes`, `get_memory_status`, `get_top_memory_processes`.
 - Stores observations locally; only alerts go to your configured Rakazo bot. No telemetry.
+- Optional separate action endpoint: expiring disconnect/quarantine and process signal proposals, human approval in the client, protected management sources and durable execution audit. Disabled by default; see [Response setup and authorization boundary](deploy/RESPONSE.md).
 
 ## Quick start
 
@@ -93,7 +94,7 @@ Set `mcp.enabled = true` and supply an independent token of at least 32 non-whit
 
 **Docker networking:** inside a Rakazo container, `127.0.0.1` refers to the container. Bind the monitor to the host's specific Docker bridge IP and add that IP to `mcp.allowed_hosts`; connect Rakazo to `http://BRIDGE_IP:8787/mcp`. Permit access only from the intended API/worker network. Rakazo may require its documented private-MCP-endpoint setting. Do not expose the endpoint publicly or disable authentication to work around networking. For access beyond a trusted local network, put authenticated TLS in front of it and configure the explicit allowed host.
 
-All HTTP MCP requests require a Bearer token. The official Rust MCP SDK enforces the Host allowlist; browser Origin requests are rejected. Request bodies are limited to 64 KiB. There is no arbitrary command tool and no mutation tool. The authenticated data includes login identities/IPs and process names, so restrict access to authorized operators.
+All HTTP MCP requests require a Bearer token. The official Rust MCP SDK enforces the Host allowlist; browser Origin requests are rejected. Request bodies are limited to 64 KiB. There is no arbitrary command tool or mutation tool on this monitoring endpoint. The authenticated data includes login identities/IPs and process names, so restrict access to authorized operators.
 
 ### Stdio
 
@@ -127,3 +128,7 @@ cargo test --all-targets --locked
 Tests cover journal parsing and trust matching, spoofed records, persistent cursors/outbox, CPU thresholds and gaps, webhook retries and authentication, and real HTTP MCP initialization/tool calls. The Linux-only smoke test exercises the daemon with fixture journal commands and real `/proc`; it does not send real notifications.
 
 See [SECURITY.md](SECURITY.md) for reporting vulnerabilities. Contributions are welcome; include tests for detection and delivery changes. No production logs, IPs, usernames or credentials should be included in issues or fixtures.
+
+## Memory queries
+
+Memory is sampled at `sample_seconds`, with RAM usage based on `MemTotal - MemAvailable`, swap, PSI (10/60/300-second stall percentages), cumulative OOM kills and the top 20 RSS processes. Null means unavailable, not zero. RSS includes shared pages and cannot be summed; samples can miss exiting/unreadable processes. Memory is query-only in this release; it does not emit threshold alerts. Kernel definitions: [proc](https://docs.kernel.org/filesystems/proc.html) and [PSI](https://docs.kernel.org/accounting/psi.html).

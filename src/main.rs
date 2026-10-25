@@ -23,6 +23,8 @@ enum Action {
     Mcp,
     /// Explicitly send a synthetic test notification to configured Rakazo bot.
     TestWebhook,
+    /// Run the root-owned Unix-socket response broker (Linux, optional capability).
+    ResponseAgent,
 }
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -40,6 +42,9 @@ async fn main() -> Result<()> {
             "Configuration is valid. Secret availability and connectivity are checked at startup."
         ),
         Action::Run => daemon::run(config).await?,
+        Action::ResponseAgent => {
+            host_sentinel::response::serve_agent(config.response, config.host_label).await?
+        }
         Action::Status => {
             let store = daemon::open_store(&config)?;
             println!(

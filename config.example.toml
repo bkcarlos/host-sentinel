@@ -41,3 +41,24 @@ enabled = false
 listen = "127.0.0.1:8787"
 token_env = "SENTINEL_MCP_TOKEN"
 allowed_hosts = ["localhost", "127.0.0.1", "::1"]
+
+# Optional privileged response. Read deploy/RESPONSE.md before enabling.
+# Requires a separate root broker and an exact mandatory client approval rule.
+[response]
+enabled = false
+socket = "/run/host-sentinel-response/control.sock"
+state_dir = "/var/lib/host-sentinel-response"
+# Set this to: id -u host-sentinel (never root).
+# allowed_uid = 999
+listen = "127.0.0.1:8788"
+token_env = "SENTINEL_RESPONSE_TOKEN"
+allowed_hosts = ["localhost", "127.0.0.1", "::1"]
+# REQUIRED: replace with the management sources that must never be cut off.
+protected_networks = []
+protected_users = ["root", "host-sentinel"]
+# Explicit ordinary user UIDs allowed for process signals; empty disables real signals.
+process_allowed_uids = []
+protected_process_names = []
+ssh_ports = [22]
+max_quarantine_seconds = 3600
+proposal_ttl_seconds = 300

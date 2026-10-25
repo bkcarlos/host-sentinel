@@ -50,6 +50,18 @@ pub async fn run(config: Config) -> Result<()> {
     } else {
         None
     };
+    let response_token = if config.response.enabled {
+        let token = secret(&config.response.token_env)?;
+        if let Some(read_token) = &mcp_token {
+            ensure!(
+                token != *read_token,
+                "response and read-only MCP tokens must differ"
+            );
+        }
+        Some(token)
+    } else {
+        None
+    };
     store.set("daemon_started_at", &json!(crate::now()))?;
     // Keep the first-start boundary durable even before the first matching journal entry.
     if store.get("journal_since")?.is_none() {
@@ -70,6 +82,10 @@ pub async fn run(config: Config) -> Result<()> {
         result = async {
             if let Some(token) = mcp_token { mcp::serve_http(store.clone(),config.mcp.clone(),token).await }
             else { std::future::pending::<Result<()>>().await }
+        } => result,
+        result = async {
+            if let Some(token)=response_token {crate::response_mcp::serve_http(config.response.clone(),token).await}
+            else {std::future::pending::<Result<()>>().await}
         } => result,
         _ = shutdown_signal() => Ok(()),
     };
@@ -268,6 +284,9 @@ async fn sample_cpu(config: &Config, store: Store) -> Result<()> {
     loop {
         tick.tick().await;
         let now = crate::now();
+        let memory = crate::memory::sample(Path::new("/proc"), now)
+            .unwrap_or_else(|e| json!({"timestamp":now,"error":e.to_string()}));
+        store.set("memory", &memory)?;
         if let Some(sample) = sampler.sample(Path::new("/proc"), now)? {
             let mut events = vec![];
             for alert in

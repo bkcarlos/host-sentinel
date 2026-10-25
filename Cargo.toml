@@ -1,6 +1,6 @@
 [package]
 name = "host-sentinel"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Linux SSH and CPU monitoring with durable Rakazo alerts and read-only MCP"
@@ -12,6 +12,7 @@ axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 fs2 = "0.4"
 ipnet = { version = "2", features = ["serde"] }
+libc = "0.2"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rmcp = { version = "3.7", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }

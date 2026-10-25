@@ -3,7 +3,11 @@ pub mod cpu;
 pub mod daemon;
 pub mod journal;
 pub mod mcp;
+pub mod memory;
 pub mod notify;
+pub mod process_response;
+pub mod response;
+pub mod response_mcp;
 pub mod store;
 
 pub fn now() -> u64 {

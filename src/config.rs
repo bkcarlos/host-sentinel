@@ -14,6 +14,7 @@ pub struct Config {
     pub ssh: SshConfig,
     pub webhook: WebhookConfig,
     pub mcp: McpConfig,
+    pub response: ResponseConfig,
 }
 
 impl Default for Config {
@@ -27,6 +28,7 @@ impl Default for Config {
             ssh: SshConfig::default(),
             webhook: WebhookConfig::default(),
             mcp: McpConfig::default(),
+            response: ResponseConfig::default(),
         }
     }
 }
@@ -125,6 +127,45 @@ impl Default for McpConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ResponseConfig {
+    pub enabled: bool,
+    pub socket: PathBuf,
+    pub state_dir: PathBuf,
+    pub allowed_uid: Option<u32>,
+    pub listen: SocketAddr,
+    pub token_env: String,
+    pub allowed_hosts: Vec<String>,
+    pub protected_networks: Vec<IpNet>,
+    pub protected_users: Vec<String>,
+    pub process_allowed_uids: Vec<u32>,
+    pub protected_process_names: Vec<String>,
+    pub ssh_ports: Vec<u16>,
+    pub max_quarantine_seconds: u64,
+    pub proposal_ttl_seconds: u64,
+}
+impl Default for ResponseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            socket: "/run/host-sentinel-response/control.sock".into(),
+            state_dir: "/var/lib/host-sentinel-response".into(),
+            allowed_uid: None,
+            listen: "127.0.0.1:8788".parse().unwrap(),
+            token_env: "SENTINEL_RESPONSE_TOKEN".into(),
+            allowed_hosts: vec!["localhost".into(), "127.0.0.1".into(), "::1".into()],
+            protected_networks: vec![],
+            protected_users: vec!["root".into(), "host-sentinel".into()],
+            process_allowed_uids: vec![],
+            protected_process_names: vec![],
+            ssh_ports: vec![22],
+            max_quarantine_seconds: 3600,
+            proposal_ttl_seconds: 300,
+        }
+    }
+}
+
 impl Config {
     pub fn load(path: &std::path::Path) -> Result<Self> {
         let config: Self =
@@ -134,6 +175,61 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&self) -> Result<()> {
+        if self.response.enabled {
+            let r = &self.response;
+            ensure!(
+                r.allowed_uid.is_some_and(|u| u > 0),
+                "response.allowed_uid must identify the unprivileged monitor user"
+            );
+            ensure!(
+                !r.protected_networks.is_empty(),
+                "response requires explicit protected management networks"
+            );
+            ensure!(
+                !r.allowed_hosts.is_empty(),
+                "response.allowed_hosts cannot be empty"
+            );
+            ensure!(
+                !r.ssh_ports.is_empty()
+                    && r.ssh_ports.len() <= 8
+                    && r.ssh_ports.iter().all(|p| *p > 0),
+                "invalid response SSH ports"
+            );
+            ensure!(
+                r.ssh_ports.windows(2).all(|w| w[0] < w[1]),
+                "SSH ports must be sorted and unique"
+            );
+            ensure!(
+                r.process_allowed_uids
+                    .iter()
+                    .all(|uid| *uid >= 1000 && Some(*uid) != r.allowed_uid),
+                "process action UIDs must be ordinary users, excluding the monitor"
+            );
+            ensure!(
+                (60..=3600).contains(&r.max_quarantine_seconds),
+                "quarantine maximum must be 60..3600 seconds"
+            );
+            ensure!(
+                (30..=600).contains(&r.proposal_ttl_seconds),
+                "proposal TTL must be 30..600 seconds"
+            );
+            ensure!(
+                r.socket.is_absolute() && r.state_dir.is_absolute(),
+                "response paths must be absolute"
+            );
+            ensure!(
+                r.state_dir != self.state_dir,
+                "privileged action state must be separate from monitor state"
+            );
+            ensure!(
+                r.token_env != self.mcp.token_env && r.token_env != self.webhook.token_env,
+                "response token must be independent"
+            );
+            ensure!(
+                r.listen != self.mcp.listen,
+                "response and monitoring need separate listeners"
+            );
+        }
         ensure!(
             (1..=60).contains(&self.sample_seconds),
             "sample_seconds must be 1..60"

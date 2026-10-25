@@ -147,7 +147,7 @@ async fn mcp_auth_handshake_tool_list_and_origin_guard() -> Result<()> {
         .send()
         .await?;
     let tools = rpc_response(tools_response).await?;
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 5);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
     let result_response = client.post(&url).bearer_auth(TOKEN).header("accept","application/json, text/event-stream").header("mcp-session-id",&sid).header("mcp-protocol-version","2025-03-26")
         .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_status","arguments":{}}})).send().await?;
     let result = rpc_response(result_response).await?;
@@ -217,4 +217,73 @@ async fn rpc_response(mut response: reqwest::Response) -> Result<Value> {
         anyhow::bail!("no JSON-RPC response in SSE body: {buffer}")
     })
     .await?
+}
+
+#[tokio::test]
+async fn response_endpoint_has_independent_auth_and_mutation_metadata() -> Result<()> {
+    let config = host_sentinel::config::ResponseConfig::default();
+    let action_token = "separate-action-token-for-this-test-12345";
+    let app = host_sentinel::response_mcp::router(&config, action_token);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::new();
+    let url = format!("http://{address}/mcp");
+    let init = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"approval-test","version":"1"}}});
+    assert_eq!(
+        client
+            .post(&url)
+            .bearer_auth(TOKEN)
+            .json(&init)
+            .send()
+            .await?
+            .status(),
+        401
+    );
+    let response = client
+        .post(&url)
+        .bearer_auth(action_token)
+        .header("accept", "application/json, text/event-stream")
+        .json(&init)
+        .send()
+        .await?;
+    let sid = response.headers()["mcp-session-id"].to_str()?.to_string();
+    rpc_response(response).await?;
+    client
+        .post(&url)
+        .bearer_auth(action_token)
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-session-id", &sid)
+        .header("mcp-protocol-version", "2025-03-26")
+        .json(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
+        .send()
+        .await?
+        .error_for_status()?;
+    let response = client
+        .post(&url)
+        .bearer_auth(action_token)
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-session-id", &sid)
+        .header("mcp-protocol-version", "2025-03-26")
+        .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+        .send()
+        .await?;
+    let result = rpc_response(response).await?;
+    let tools = result["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 7);
+    let execute = tools
+        .iter()
+        .find(|t| t["name"] == "execute_session_action")
+        .unwrap();
+    assert_eq!(execute["annotations"]["readOnlyHint"], false);
+    assert_eq!(execute["annotations"]["destructiveHint"], true);
+    assert!(execute["inputSchema"]["properties"]["proposal"].is_object());
+    let kill = tools
+        .iter()
+        .find(|t| t["name"] == "execute_process_action")
+        .unwrap();
+    assert_eq!(kill["annotations"]["readOnlyHint"], false);
+    assert_eq!(kill["annotations"]["destructiveHint"], true);
+    server.abort();
+    Ok(())
 }
