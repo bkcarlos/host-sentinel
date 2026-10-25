@@ -312,8 +312,21 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn pidfd_signals_only_disposable_child_and_rejects_dead_handle() -> Result<()> {
-        let mut child = std::process::Command::new("/bin/sleep").arg("30").spawn()?;
+        use std::io::BufRead;
+        use std::process::Stdio;
+        // Wait for the child to finish exec/startup before inspecting /proc.
+        // A newly spawned sleep can still change its comm during identity().
+        // This shell stays in its read builtin until the test signals it.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "printf 'ready\\n'; read -r sentinel_test_input"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
         let result = (|| -> Result<()> {
+            let mut ready = String::new();
+            std::io::BufReader::new(child.stdout.take().context("child stdout")?)
+                .read_line(&mut ready)?;
+            ensure!(ready == "ready\n", "child did not complete startup");
             let fd = open_pidfd(child.id())?;
             let before = identity(child.id())?;
             ensure!(before.pid == child.id(), "wrong child identity");
