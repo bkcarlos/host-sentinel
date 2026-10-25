@@ -464,6 +464,21 @@ impl Store {
         let mut q = q.clone();
         q.kind = Some("success".into());
         let mut report = self.auth_query(&q)?;
+        // Do not present filtered-out failures as measured zeros: agents can
+        // otherwise mistake this successful-login-only view for an auth audit.
+        report["counts"] = json!({"success":report["counts"]["success"]});
+        if let Some(groups) = report["source_groups"].as_array_mut() {
+            for group in groups {
+                if let Some(group) = group.as_object_mut() {
+                    group.remove("failed_authentication_records");
+                    group.remove("invalid_user_observations");
+                }
+            }
+        }
+        report["failure_statistics"] = json!({"status":"not_queried","note":"This tool queries successful logins only. It cannot establish failure or invalid-user counts, including zero. Use investigate_ssh_activity or get_auth_attempts WITHOUT a kind filter for those counts."});
+        report["counting_note"] = json!(
+            "Counts cover successful login starts only across the indexed range, independent of page size. Failure and invalid-user statistics were not queried and must not be reported as zero."
+        );
         let snapshot = self.get("sessions")?.unwrap_or(Value::Null);
         let fresh = snapshot["timestamp"]
             .as_u64()
@@ -753,6 +768,13 @@ mod tests {
         };
         let r = store.login_timeline(&q)?;
         assert_eq!(r["counts"]["success"], 2);
+        assert!(r["counts"].get("failure").is_none());
+        assert!(
+            r["source_groups"][0]
+                .get("failed_authentication_records")
+                .is_none()
+        );
+        assert_eq!(r["failure_statistics"]["status"], "not_queried");
         assert_eq!(r["returned_count"], 1);
         assert_eq!(r["timelines"][0]["session_close_observed"], false);
         assert_eq!(
