@@ -25,6 +25,22 @@ enum Action {
     TestWebhook,
     /// Run the root-owned Unix-socket response broker (Linux, optional capability).
     ResponseAgent,
+    /// Index retained SSH journal evidence without sending alerts or moving the live cursor.
+    BackfillAuth {
+        #[arg(long)]
+        since: String,
+        #[arg(long)]
+        until: String,
+    },
+    /// Root-only local session attribution receipt. Does not grant trust or execute commands.
+    RecordAutomation {
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        task_id: String,
+        #[arg(long)]
+        label: String,
+    },
 }
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -38,6 +54,24 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = Config::load(&cli.config)?;
     match cli.command {
+        Action::BackfillAuth { since, until } => {
+            let store = daemon::open_store(&config)?;
+            println!(
+                "{}",
+                host_sentinel::investigation::backfill(&config, &store, &since, &until).await?
+            );
+        }
+        Action::RecordAutomation {
+            session_id,
+            task_id,
+            label,
+        } => {
+            println!(
+                "{}",
+                host_sentinel::sessions::record_automation(&config, &session_id, &task_id, &label)
+                    .await?
+            );
+        }
         Action::Check => println!(
             "Configuration is valid. Secret availability and connectivity are checked at startup."
         ),

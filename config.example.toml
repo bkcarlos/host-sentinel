@@ -15,6 +15,9 @@ spike_seconds = 30
 cooldown_seconds = 900
 
 [ssh]
+# Legacy units remain accepted; evidence collection follows root SSH process names across units.
+# Optional root-authored task receipts (monitor reads only).
+automation_dir = "/etc/host-sentinel/automation.d"
 units = ["ssh.service", "sshd.service"]
 failure_count = 10
 failure_window_seconds = 300

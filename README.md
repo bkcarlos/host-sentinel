@@ -11,7 +11,7 @@ Lightweight Linux SSH, CPU, memory and disk monitoring in Rust, with durable Rak
 - Alerts on repeated `Failed …` authentication records from one IP. `Invalid user …` records are retained separately, avoiding counting the same failure twice.
 - Detects sustained whole-machine CPU load and sustained jumps above a rolling baseline. Sends recovery events and includes the five highest CPU processes (names and PIDs only).
 - Atomically saves journal cursor, detector state and events to SQLite. Durable webhook outbox, exponential retries, stable Rakazo idempotency keys, and no HTTP redirects.
-- Exposes eight query tools over MCP Streamable HTTP or stdio: `get_status`, `list_alerts`, `list_logins`, `get_sessions`, `get_top_processes`, `get_memory_status`, `get_top_memory_processes`, `get_disk_status`.
+- Exposes fifteen query tools over MCP Streamable HTTP or stdio: `get_status`, `list_alerts`, `list_logins`, `get_sessions`, `get_top_processes`, `get_memory_status`, `get_top_memory_processes`, `get_disk_status`, plus seven [SSH investigation tools](deploy/INVESTIGATION.md).
 - Stores observations locally; only alerts go to your configured Rakazo bot. No telemetry.
 - Optional separate action endpoint: expiring disconnect/quarantine and process signal proposals, human approval in the client, protected management sources and durable execution audit. Disabled by default; see [Response setup and authorization boundary](deploy/RESPONSE.md).
 
@@ -138,3 +138,7 @@ Memory is sampled at `sample_seconds`, with RAM usage based on `MemTotal - MemAv
 `get_disk_status` reports mounted local filesystem capacity, used/available bytes, usage percentage and inode counts. It refreshes every 30 seconds using a fixed, bounded GNU `df` command; disk sampling failures do not stop CPU/SSH monitoring. Check timestamp, `partial` and `error`/`collection_error`. Unsupported inode counts are null. Available bytes exclude reserved blocks; percentages follow [GNU df](https://www.gnu.org/s/coreutils/manual/html_node/df-invocation.html) and round up.
 
 The inventory reflects the service mount namespace and permissions, coalesces duplicate/bind mounts, and excludes remote/unmounted filesystems, tmpfs/devtmpfs, overlay, squashfs and efivarfs. Container data on the host disk still contributes to its usage. No recursive directory scans, file deletion, cleanup or disk threshold notifications are performed. Linux runtime requires GNU coreutils at `/usr/bin/df`.
+
+## Evidence-backed SSH investigation
+
+Version 0.3 adds exact backend time-range counts, individual failures, lifecycle evidence, detailed session classification, trust explanations, collection coverage and administrator-authored automation receipts. Start with `investigate_ssh_activity`; see [the investigation guide](deploy/INVESTIGATION.md) for query bounds, historical backfill and attribution limits.

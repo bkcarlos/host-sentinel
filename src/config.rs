@@ -63,6 +63,12 @@ impl Default for CpuConfig {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TrustRule {
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub verification_note: Option<String>,
     pub user: Option<String>,
     pub networks: Vec<IpNet>,
     pub fingerprints: Vec<String>,
@@ -76,6 +82,7 @@ pub struct SshConfig {
     pub failure_count: usize,
     pub failure_window_seconds: u64,
     pub failure_cooldown_seconds: u64,
+    pub automation_dir: PathBuf,
 }
 impl Default for SshConfig {
     fn default() -> Self {
@@ -85,6 +92,7 @@ impl Default for SshConfig {
             failure_count: 10,
             failure_window_seconds: 300,
             failure_cooldown_seconds: 900,
+            automation_dir: "/etc/host-sentinel/automation.d".into(),
         }
     }
 }
@@ -290,6 +298,15 @@ impl Config {
         );
         for rule in &self.ssh.trusted {
             ensure!(
+                rule.label.as_ref().is_none_or(|s| s.len() <= 256)
+                    && rule.owner.as_ref().is_none_or(|s| s.len() <= 256)
+                    && rule
+                        .verification_note
+                        .as_ref()
+                        .is_none_or(|s| s.len() <= 1024),
+                "trust metadata is too long"
+            );
+            ensure!(
                 !rule.networks.is_empty() || !rule.fingerprints.is_empty(),
                 "trust rules require a network or key fingerprint"
             );
@@ -300,6 +317,10 @@ impl Config {
                 "use SHA256 key fingerprints"
             );
         }
+        ensure!(
+            self.ssh.automation_dir.is_absolute(),
+            "automation_dir must be absolute"
+        );
         if self.webhook.enabled {
             let url = reqwest::Url::parse(&self.webhook.url).context("invalid webhook URL")?;
             ensure!(

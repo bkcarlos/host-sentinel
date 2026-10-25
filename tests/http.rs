@@ -73,6 +73,12 @@ async fn mcp_auth_handshake_tool_list_and_origin_guard() -> Result<()> {
     )?;
     let disk = json!({"timestamp":123,"partial":false,"filesystems":[{"mount_point":"/data with spaces","total_bytes":1000,"used_bytes":600,"available_bytes":300,"used_percent":67,"inodes_total":null}]});
     db.set("disk", &disk)?;
+    host_sentinel::daemon::ingest(
+        &db,
+        &host_sentinel::config::Config::default(),
+        &mut host_sentinel::journal::FailureTracker::default(),
+        &json!({"__CURSOR":"http-evidence","__REALTIME_TIMESTAMP":chrono::DateTime::parse_from_rfc3339("2024-01-01T20:17:23+08:00")?.timestamp_micros().to_string(),"_UID":"0","_COMM":"sshd-session","_PID":"123","_BOOT_ID":"test","MESSAGE":"Accepted publickey for ubuntu from 192.0.2.1 port 1234 ssh2: RSA SHA256:test"}),
+    )?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let app = mcp::router(db, &McpConfig::default(), TOKEN);
@@ -149,7 +155,7 @@ async fn mcp_auth_handshake_tool_list_and_origin_guard() -> Result<()> {
         .send()
         .await?;
     let tools = rpc_response(tools_response).await?;
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 15);
     let result_response = client.post(&url).bearer_auth(TOKEN).header("accept","application/json, text/event-stream").header("mcp-session-id",&sid).header("mcp-protocol-version","2025-03-26")
         .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_status","arguments":{}}})).send().await?;
     let result = rpc_response(result_response).await?;
@@ -170,6 +176,17 @@ async fn mcp_auth_handshake_tool_list_and_origin_guard() -> Result<()> {
     let actual: Value =
         serde_json::from_str(result["result"]["content"][0]["text"].as_str().unwrap())?;
     assert_eq!(actual, disk);
+    let response=client.post(&url).bearer_auth(TOKEN).header("accept","application/json, text/event-stream").header("mcp-session-id",&sid).header("mcp-protocol-version","2025-03-26")
+        .json(&json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"investigate_ssh_activity","arguments":{"since":"2024-01-01T20:17:00+08:00","until":"2024-01-01T20:26:00+08:00","limit":1}}})).send().await?;
+    let result = rpc_response(response).await?;
+    let actual: Value =
+        serde_json::from_str(result["result"]["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(actual["counts"]["success"], 1);
+    assert_eq!(
+        actual["records"][0]["time"]["beijing"],
+        "2024-01-01T20:17:23+08:00"
+    );
+    assert_eq!(actual["coverage"]["history_gap_possible"], true);
     server.abort();
     Ok(())
 }

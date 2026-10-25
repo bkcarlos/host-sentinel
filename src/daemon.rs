@@ -63,6 +63,24 @@ pub async fn run(config: Config) -> Result<()> {
         None
     };
     store.set("daemon_started_at", &json!(crate::now()))?;
+    if store.get("auth_detail_started_at")?.is_none() {
+        store.set("auth_detail_started_at", &json!(crate::now()))?;
+    }
+    store.set("trust_policy", &json!({"timestamp":crate::now(),"rules":crate::investigation::trust_rules(&config.ssh),"meaning":"Matches configured account/network/key conditions. Labels and ownership notes are configuration, not proof of the current operator."}))?;
+    if let Some(previous) = store
+        .get("auth_journal_heartbeat")?
+        .and_then(|v| v["timestamp"].as_u64())
+    {
+        let mut gaps = store
+            .get("auth_collection_gaps")?
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
+        gaps.push(json!({"since":previous,"until":crate::now(),"reason":"collector restart; retained journal may be replayed, but continuity is not independently guaranteed"}));
+        if gaps.len() > 50 {
+            gaps.drain(..gaps.len() - 50);
+        }
+        store.set("auth_collection_gaps", &json!(gaps))?;
+    }
     // Keep the first-start boundary durable even before the first matching journal entry.
     if store.get("journal_since")?.is_none() {
         store.set("journal_since", &json!(crate::now()))?;
@@ -73,7 +91,7 @@ pub async fn run(config: Config) -> Result<()> {
     let result: Result<()> = tokio::select! {
         result = follow_journal(&config,store.clone()) => result,
         result = sample_cpu(&config,store.clone()) => result,
-        result = session_inventory(store.clone()) => result,
+        result = session_inventory(store.clone(), &config) => result,
         result = disk_inventory(store.clone()) => result,
         result = async {
             if let Some(notifier) = notifier {
@@ -92,6 +110,10 @@ pub async fn run(config: Config) -> Result<()> {
     };
     if let Err(error) = &result {
         tracing::error!(%error,"monitor stopped; service manager should restart it");
+        store.set(
+            "auth_last_collector_error",
+            &json!({"timestamp":crate::now(),"error":error.to_string()}),
+        )?;
         store.insert(
             &Event::new(
                 &config.host_label,
@@ -152,6 +174,20 @@ pub fn ingest(
     } else {
         None
     };
+    let evidence = crate::investigation::from_journal(record, config, false);
+    if root
+        && ["sshd", "sshd-session", "sshd-auth"].contains(&comm)
+        && evidence.is_none()
+        && ["Accepted ", "Failed ", "Invalid user "]
+            .iter()
+            .any(|p| message.starts_with(p))
+    {
+        let n = store
+            .get("auth_parser_rejections")?
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        store.set("auth_parser_rejections", &json!(n + 1))?;
+    }
     let mut event = None;
     match parsed {
         Some(AuthEvent::Login(login)) => {
@@ -200,10 +236,11 @@ pub fn ingest(
     if let Some((event, _)) = &mut event {
         event.id = format!("journal-{:x}", Sha256::digest(cursor.as_bytes()));
     }
-    store.journal_commit(
+    store.journal_evidence_commit(
         cursor,
         event.as_ref().map(|(e, n)| (e, *n)),
         &serde_json::to_value(tracker)?,
+        evidence.as_ref(),
     )?;
     Ok(())
 }
@@ -224,9 +261,8 @@ async fn follow_journal(config: &Config, store: Store) -> Result<()> {
         "--no-pager",
         "--all",
     ]);
-    for unit in &config.ssh.units {
-        cmd.arg("--unit").arg(unit);
-    }
+    // SSH workers move into session scopes; unit-only filters lose disconnect/close records.
+    cmd.args(crate::investigation::JOURNAL_MATCHES);
     if let Some(cursor) = store
         .get("journal_cursor")?
         .and_then(|v| v.as_str().map(String::from))
@@ -248,22 +284,22 @@ async fn follow_journal(config: &Config, store: Store) -> Result<()> {
     store.set("journal_started_at", &json!(crate::now()))?;
     let mut reader = BufReader::new(child.stdout.take().context("journal stdout")?);
     let mut buf = Vec::new();
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
     loop {
-        // read_until is bounded below by terminating on oversized records; journal
-        // output normally has a small fixed field set for sshd records.
         use tokio::io::AsyncReadExt;
-        buf.clear();
-        let n = (&mut reader)
-            .take(1024 * 1024 + 1)
-            .read_until(b'\n', &mut buf)
-            .await?;
-        if n == 0 {
-            break;
-        }
-        ensure!(buf.len() <= 1024 * 1024, "journal entry exceeds 1 MiB");
-        match serde_json::from_slice::<Value>(&buf) {
-            Ok(record) => ingest(&store, config, &mut tracker, &record)?,
-            Err(_) => bail!("journalctl produced non-JSON output; check journal access and cursor"),
+        let remaining = (1024 * 1024 + 1 - buf.len()) as u64;
+        let mut bounded = (&mut reader).take(remaining);
+        tokio::select! {
+            _=heartbeat.tick()=>{
+                store.set("auth_journal_heartbeat",&json!({"timestamp":crate::now(),"pid":child.id(),"selector":crate::investigation::JOURNAL_MATCHES,"last_checkpoint":store.get("journal_cursor")?}))?;
+            },
+            result=bounded.read_until(b'\n',&mut buf)=>{
+                let n=result?;if n==0 {break;}
+                ensure!(buf.len()<=1024*1024,"journal entry exceeds 1 MiB");
+                let record:Value=serde_json::from_slice(&buf).context("journalctl produced invalid JSON")?;
+                ingest(&store,config,&mut tracker,&record)?;
+                buf.clear();
+            }
         }
     }
     let status = child.wait().await?;
@@ -322,22 +358,16 @@ async fn disk_inventory(store: Store) -> Result<()> {
     }
 }
 
-async fn session_inventory(store: Store) -> Result<()> {
+async fn session_inventory(store: Store, config: &Config) -> Result<()> {
     loop {
-        let mut cmd = Command::new("loginctl");
-        cmd.args(["list-sessions", "--json=short", "--no-pager"])
-            .kill_on_drop(true);
-        let result = tokio::time::timeout(Duration::from_secs(5), cmd.output()).await;
-        let snapshot = match result {
-            Ok(Ok(out)) if out.status.success() => {
-                match serde_json::from_slice::<Value>(&out.stdout) {
-                    Ok(sessions) => json!({"timestamp":crate::now(),"sessions":sessions}),
-                    Err(_) => json!({"timestamp":crate::now(),"error":"loginctl JSON unsupported"}),
-                }
-            }
-            _ => json!({"timestamp":crate::now(),"error":"loginctl unavailable or timed out"}),
-        };
+        let snapshot = crate::sessions::snapshot(&store)
+            .await
+            .unwrap_or_else(|e| json!({"timestamp":crate::now(),"error":e.to_string()}));
         store.set("sessions", &snapshot)?;
+        store.set(
+            "automation_receipts",
+            &crate::sessions::read_receipts(&config.ssh.automation_dir),
+        )?;
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }

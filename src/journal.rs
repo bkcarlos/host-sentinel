@@ -141,6 +141,7 @@ mod tests {
             user: Some("ubuntu".into()),
             networks: vec!["2001:db8::/32".parse().unwrap()],
             fingerprints: vec!["SHA256:abc123".into()],
+            ..Default::default()
         });
         assert!(trusted(&login, &c));
         c.trusted[0].fingerprints = vec!["SHA256:other".into()];

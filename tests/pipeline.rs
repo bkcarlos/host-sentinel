@@ -31,6 +31,7 @@ fn valid_trusted_login_is_recorded_without_notification() -> Result<()> {
         user: Some("ubuntu".into()),
         networks: vec!["192.0.2.0/24".parse()?],
         fingerprints: vec!["SHA256:abc123".into()],
+        ..Default::default()
     });
     let mut tracker = FailureTracker::default();
     ingest(

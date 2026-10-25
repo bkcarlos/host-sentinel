@@ -28,7 +28,7 @@ impl Event {
 }
 
 #[derive(Clone)]
-pub struct Store(Arc<Mutex<Connection>>);
+pub struct Store(pub(crate) Arc<Mutex<Connection>>);
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
@@ -42,7 +42,14 @@ impl Store {
                 attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT);
             CREATE INDEX IF NOT EXISTS event_time ON events(timestamp);
-            CREATE INDEX IF NOT EXISTS outbox ON events(notify,delivered,next_attempt);")?;
+            CREATE INDEX IF NOT EXISTS outbox ON events(notify,delivered,next_attempt);
+            CREATE TABLE IF NOT EXISTS auth_records (
+                id TEXT PRIMARY KEY, timestamp_us INTEGER NOT NULL, kind TEXT NOT NULL,
+                user TEXT, source_ip TEXT, boot_id TEXT, pid INTEGER, payload TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS auth_time ON auth_records(timestamp_us,id);
+            CREATE INDEX IF NOT EXISTS auth_source_time ON auth_records(source_ip,timestamp_us);
+            CREATE INDEX IF NOT EXISTS auth_user_time ON auth_records(user,timestamp_us);
+            CREATE INDEX IF NOT EXISTS auth_process ON auth_records(boot_id,pid,timestamp_us);")?;
         Ok(Self(Arc::new(Mutex::new(conn))))
     }
     pub fn get(&self, key: &str) -> Result<Option<Value>> {
@@ -84,10 +91,22 @@ impl Store {
         event: Option<(&Event, bool)>,
         detection: &Value,
     ) -> Result<()> {
+        self.journal_evidence_commit(cursor, event, detection, None)
+    }
+    pub fn journal_evidence_commit(
+        &self,
+        cursor: &str,
+        event: Option<(&Event, bool)>,
+        detection: &Value,
+        evidence: Option<&crate::investigation::AuthRecord>,
+    ) -> Result<()> {
         let mut conn = self.0.lock().unwrap();
         let tx = conn.transaction()?;
         if let Some((event, notify)) = event {
             insert_event(&tx, event, notify)?;
+        }
+        if let Some(e) = evidence {
+            crate::investigation::insert_record(&tx, e)?;
         }
         for (key, value) in [
             ("journal_cursor", serde_json::json!(cursor)),
@@ -159,6 +178,11 @@ impl Store {
         )?)
     }
     pub fn prune(&self, before: u64) -> Result<()> {
+        self.0.lock().unwrap().execute(
+            "DELETE FROM auth_records WHERE timestamp_us<?",
+            [before.saturating_mul(1_000_000)],
+        )?;
+        self.set("auth_pruned_before", &serde_json::json!(before))?;
         // Never discard undelivered alerts merely because they are old.
         self.0.lock().unwrap().execute(
             "DELETE FROM events WHERE timestamp<? AND (notify=0 OR delivered=1)",
